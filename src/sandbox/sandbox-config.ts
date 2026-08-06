@@ -707,6 +707,16 @@ export const CredentialsConfigSchema = z
  * Network configuration schema for validation
  */
 export const NetworkConfigSchema = z.object({
+  disabled: z
+    .boolean()
+    .optional()
+    .describe(
+      'Disable all network policy enforcement. When true, network traffic uses the host network ' +
+        'directly: no proxy is started, no proxy environment variables are injected, and Unix ' +
+        'sockets are not blocked. allowedDomains/deniedDomains and other proxy settings are ignored. ' +
+        'Filesystem restrictions remain enforced. Supported on macOS and Linux; Windows cannot ' +
+        'disable its install-scoped WFP fence for the sandbox account.',
+    ),
   allowedDomains: z
     .array(domainPortPatternSchema)
     .describe(
@@ -1361,6 +1371,7 @@ export const SandboxRuntimeConfigSchema = z
     // is the explicit escape hatch.
     if (
       hasMasked &&
+      !cfg.network.disabled &&
       cfg.network.tlsTerminate === undefined &&
       !creds.allowPlaintextInject
     ) {
@@ -1371,6 +1382,16 @@ export const SandboxRuntimeConfigSchema = z
           'Credential masking requires network.tlsTerminate so substitution ' +
           'runs only over a verified TLS connection. Enable tlsTerminate, or ' +
           'set credentials.allowPlaintextInject to opt out (not recommended).',
+      })
+    }
+    if (hasMasked && cfg.network.disabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['credentials'],
+        message:
+          'Credential masking is incompatible with network.disabled because ' +
+          'sentinel substitution runs in the SRT proxy. Use credential mode ' +
+          '"deny", or enable network enforcement.',
       })
     }
   })

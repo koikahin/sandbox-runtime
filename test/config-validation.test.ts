@@ -19,6 +19,54 @@ describe('Config Validation', () => {
     expect(result.success).toBe(true)
   })
 
+  test('should validate network.disabled while retaining the normal settings shape', () => {
+    const result = SandboxRuntimeConfigSchema.safeParse({
+      network: {
+        disabled: true,
+        allowedDomains: [],
+        deniedDomains: [],
+      },
+      filesystem: {
+        denyRead: [],
+        allowWrite: ['.'],
+        denyWrite: [],
+      },
+    })
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.network.disabled).toBe(true)
+    }
+  })
+
+  test('should reject masked credentials when network enforcement is disabled', () => {
+    const result = SandboxRuntimeConfigSchema.safeParse({
+      network: {
+        disabled: true,
+        allowedDomains: ['api.example.com'],
+        deniedDomains: [],
+        tlsTerminate: {},
+      },
+      filesystem: {
+        denyRead: [],
+        allowWrite: [],
+        denyWrite: [],
+      },
+      credentials: {
+        envVars: [{ name: 'TOKEN', mode: 'mask' }],
+      },
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(
+        result.error.issues.some(issue =>
+          issue.message.includes('incompatible with network.disabled'),
+        ),
+      ).toBe(true)
+    }
+  })
+
   test('should validate a config with valid domains', () => {
     const config = {
       network: {
