@@ -172,6 +172,12 @@ srt --debug curl https://example.com
 
 # Specify custom settings file
 srt --settings /path/to/srt-settings.json npm install
+
+# Log denied accesses to an automatically-created temporary JSONL file
+srt --denial-log -- npm install
+
+# Or choose the log path explicitly
+srt --denial-log /tmp/npm-denials.jsonl -- npm install
 ```
 
 ### As a library
@@ -750,6 +756,21 @@ When a sandboxed process attempts to access a restricted resource:
 2. **Logs the violation** (platform-specific mechanisms)
 3. **Notifies the user** (in Claude Code, this triggers a permission prompt)
 
+The CLI can persist the violations SRT detects by passing `--denial-log`. With no path, it creates a private temporary directory and prints the resulting path; use `--denial-log <path>` to choose one. Put `--` before the command when omitting the optional path:
+
+```bash
+srt --settings .srt-settings.json --denial-log -- npm test
+srt --settings .srt-settings.json --denial-log /tmp/npm-denials.jsonl -- npm test
+```
+
+The file is newline-delimited JSON, with one record per denial, making it suitable for later grouping into read/write path trees:
+
+```json
+{"timestamp":"2026-08-05T12:34:56.789Z","command":"npm test","denial":"deny file-read-data /Users/example/.config/tool"}
+```
+
+Configured `ignoreViolations` patterns and SRT's built-in noise exclusions are applied before records reach this log.
+
 **macOS**: The sandbox runtime taps into macOS's system sandbox violation log store. This provides real-time notifications with detailed information about what was attempted and why it was blocked. This is the same mechanism Claude Code uses for violation detection.
 
 ```bash
@@ -757,7 +778,7 @@ When a sandboxed process attempts to access a restricted resource:
 log stream --predicate 'process == "sandbox-exec"' --style syslog
 ```
 
-**Linux**: Bubblewrap doesn't provide built-in violation reporting. Use `strace` to trace system calls and identify blocked operations:
+**Linux**: When monitoring is enabled, SRT's seccomp observer reports denied write-intent calls. Bubblewrap does not expose equivalent denied-read events, so use `strace` when read-denial tracing is required:
 
 ```bash
 # Trace all denied operations

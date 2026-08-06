@@ -1,8 +1,14 @@
 import { describe, test, expect } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /**
  * Get the path to the CLI entry point
@@ -166,6 +172,94 @@ describe('CLI', () => {
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('Could not load settings')
         expect(result.stdout).not.toContain('should-not-run')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe.if(process.platform === 'darwin')('--denial-log', () => {
+    test('creates and reports a temporary log when no path is supplied', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'srt-cli-denials-settings-'))
+      const settingsPath = join(dir, 'settings.json')
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          network: {
+            disabled: true,
+            allowedDomains: [],
+            deniedDomains: [],
+          },
+          filesystem: {
+            denyRead: [],
+            allowWrite: [],
+            denyWrite: [],
+          },
+        }),
+      )
+
+      let logPath: string | undefined
+      try {
+        const result = runCli([
+          '--settings',
+          settingsPath,
+          '--denial-log',
+          '--',
+          'true',
+        ])
+        expect(result.status).toBe(0)
+        logPath = result.stderr.match(/\[Sandbox\] Denial log: (.+)/)?.[1]
+        expect(logPath).toBeDefined()
+        expect(existsSync(logPath!)).toBe(true)
+        expect(logPath).toContain('srt-denials-')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+        if (logPath) rmSync(dirname(logPath), { recursive: true, force: true })
+      }
+    })
+
+    test('captures a denied filesystem access as JSONL', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'srt-cli-denials-'))
+      const settingsPath = join(dir, 'settings.json')
+      const logPath = join(dir, 'logs', 'denials.jsonl')
+      const deniedPath = join(dir, 'blocked-write.txt')
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          network: {
+            disabled: true,
+            allowedDomains: [],
+            deniedDomains: [],
+          },
+          filesystem: {
+            denyRead: [],
+            allowWrite: [],
+            denyWrite: [],
+          },
+        }),
+      )
+
+      try {
+        const result = runCli([
+          '--settings',
+          settingsPath,
+          '--denial-log',
+          logPath,
+          '--',
+          'touch',
+          deniedPath,
+        ])
+
+        expect(result.status).not.toBe(0)
+        expect(result.stderr).toContain(`[Sandbox] Denial log: ${logPath}`)
+        expect(existsSync(logPath)).toBe(true)
+        const records = readFileSync(logPath, 'utf8')
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line))
+        expect(
+          records.some(record => String(record.denial).includes(deniedPath)),
+        ).toBe(true)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }

@@ -6,6 +6,12 @@ import type { SandboxRuntimeConfig } from './sandbox/sandbox-config.js'
 import { spawn } from 'child_process'
 import { logForDebugging } from './utils/debug.js'
 import { loadConfig, loadConfigFromString } from './utils/config-loader.js'
+import {
+  createDenialLog,
+  waitForDenialLogDrain,
+  waitForDenialLogReady,
+  type DenialLog,
+} from './utils/denial-log.js'
 import * as readline from 'readline'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -34,6 +40,31 @@ function getDefaultConfig(): SandboxRuntimeConfig {
       denyWrite: [],
     },
   }
+}
+
+function waitForChild(child: ReturnType<typeof spawn>): Promise<{
+  code: number | null
+  signal: NodeJS.Signals | null
+}> {
+  return new Promise((resolve, reject) => {
+    const onSigint = () => child.kill('SIGINT')
+    const onSigterm = () => child.kill('SIGTERM')
+    const cleanupSignalHandlers = () => {
+      process.removeListener('SIGINT', onSigint)
+      process.removeListener('SIGTERM', onSigterm)
+    }
+
+    process.once('SIGINT', onSigint)
+    process.once('SIGTERM', onSigterm)
+    child.once('error', error => {
+      cleanupSignalHandlers()
+      reject(new Error(`Failed to execute command: ${error.message}`))
+    })
+    child.once('exit', (code, signal) => {
+      cleanupSignalHandlers()
+      resolve({ code, signal })
+    })
+  })
 }
 
 async function main(): Promise<void> {
@@ -147,6 +178,10 @@ async function main(): Promise<void> {
       'read config updates from file descriptor (JSON lines protocol)',
       parseInt,
     )
+    .option(
+      '--denial-log [path]',
+      'write sandbox denials as JSON Lines (default: a temporary file)',
+    )
     .allowUnknownOption()
     .action(
       async (
@@ -156,8 +191,12 @@ async function main(): Promise<void> {
           settings?: string
           c?: string
           controlFd?: number
+          denialLog?: true | string
         },
       ) => {
+        let controlReader: readline.Interface | null = null
+        let denialLog: DenialLog | undefined
+        let sandboxInitialized = false
         try {
           // Enable debug logging if requested. logForDebugging() reads
           // SRT_DEBUG (not DEBUG, to avoid clashing with the npm `debug`
@@ -179,7 +218,8 @@ async function main(): Promise<void> {
                 `Error: Could not load settings from ${configPath} (missing, unreadable, or invalid). ` +
                   'Refusing to run with the default config.',
               )
-              process.exit(1)
+              process.exitCode = 1
+              return
             }
             logForDebugging(
               `No config found at ${configPath}, using default config`,
@@ -209,10 +249,26 @@ async function main(): Promise<void> {
 
           // Initialize sandbox with config
           logForDebugging('Initializing sandbox...')
-          await SandboxManager.initialize(runtimeConfig)
+          const denialLogEnabled = options.denialLog !== undefined
+          await SandboxManager.initialize(
+            runtimeConfig,
+            undefined,
+            denialLogEnabled,
+          )
+          sandboxInitialized = true
+
+          if (denialLogEnabled) {
+            denialLog = createDenialLog(
+              SandboxManager.getSandboxViolationStore(),
+              typeof options.denialLog === 'string'
+                ? options.denialLog
+                : undefined,
+            )
+            console.error(`[Sandbox] Denial log: ${denialLog.path}`)
+            await waitForDenialLogReady()
+          }
 
           // Set up control fd for dynamic config updates if specified
-          let controlReader: readline.Interface | null = null
           if (options.controlFd !== undefined) {
             try {
               const controlStream = fs.createReadStream('', {
@@ -252,11 +308,6 @@ async function main(): Promise<void> {
             }
           }
 
-          // Cleanup control reader on exit
-          process.on('exit', () => {
-            controlReader?.close()
-          })
-
           // Determine command string based on mode
           let command: string
           if (options.c) {
@@ -274,7 +325,8 @@ async function main(): Promise<void> {
             console.error(
               'Error: No command specified. Use -c <command> or provide command arguments.',
             )
-            process.exit(1)
+            process.exitCode = 1
+            return
           }
 
           logForDebugging(
@@ -309,47 +361,42 @@ async function main(): Promise<void> {
             })
           }
 
-          // Handle process exit
-          child.on('exit', (code, signal) => {
-            // Clean up bwrap mount point artifacts before exiting.
-            // On Linux, bwrap creates empty files on the host when protecting
-            // non-existent deny paths. This removes them.
-            SandboxManager.cleanupAfterCommand()
+          const { code, signal } = await waitForChild(child)
+          if (denialLog) await waitForDenialLogDrain()
 
-            if (signal) {
-              if (signal === 'SIGINT' || signal === 'SIGTERM') {
-                process.exit(0)
-              } else {
-                console.error(`Process killed by signal: ${signal}`)
-                process.exit(1)
-              }
+          if (signal) {
+            if (signal === 'SIGINT' || signal === 'SIGTERM') {
+              process.exitCode = 0
+            } else {
+              console.error(`Process killed by signal: ${signal}`)
+              process.exitCode = 1
             }
-            process.exit(code ?? 0)
-          })
-
-          child.on('error', error => {
-            console.error(`Failed to execute command: ${error.message}`)
-            process.exit(1)
-          })
-
-          // Handle cleanup on interrupt
-          process.on('SIGINT', () => {
-            child.kill('SIGINT')
-          })
-
-          process.on('SIGTERM', () => {
-            child.kill('SIGTERM')
-          })
+          } else {
+            process.exitCode = code ?? 0
+          }
         } catch (error) {
           console.error(
             `Error: ${error instanceof Error ? error.message : String(error)}`,
           )
-          process.exit(1)
+          process.exitCode = 1
+        } finally {
+          controlReader?.close()
+          if (denialLog) {
+            denialLog.close()
+            console.error(
+              `[Sandbox] Logged ${denialLog.count} denial${denialLog.count === 1 ? '' : 's'} to ${denialLog.path}`,
+            )
+          }
+          // On Linux, bwrap creates host mount-point artifacts for missing
+          // deny paths. Clean those and all session infrastructure before the
+          // CLI yields back to Node's normal exit handling.
+          SandboxManager.cleanupAfterCommand()
+          if (sandboxInitialized) await SandboxManager.reset()
         }
       },
     )
 
-  program.parse()
+  await program.parseAsync()
 }
 
 main().catch(error => {
