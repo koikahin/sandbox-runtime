@@ -577,18 +577,18 @@ async function initialize(
   // Store config for use by other functions
   config = runtimeConfig
 
-  const networkDisabled = runtimeConfig.network.disabled ?? false
-  if (networkDisabled && getPlatform() === 'windows') {
+  const networkUnrestricted = runtimeConfig.network.mode === 'unrestricted'
+  if (networkUnrestricted && getPlatform() === 'windows') {
     config = undefined
     throw new Error(
-      'network.disabled is not supported on Windows: the install-scoped ' +
+      'network.mode="unrestricted" is not supported on Windows: the install-scoped ' +
         'WFP fence applies to every process running as the srt-sandbox user.',
     )
   }
 
   // Resolve parent/upstream proxy from config or HTTP_PROXY env before we
   // start our own listeners (which will later shadow those vars in the child).
-  parentProxy = networkDisabled
+  parentProxy = networkUnrestricted
     ? undefined
     : resolveParentProxy(runtimeConfig.network.parentProxy)
   if (parentProxy) {
@@ -601,7 +601,7 @@ async function initialize(
   // Load TLS-termination CA if configured. Throws on unreadable/non-PEM —
   // tlsTerminate is explicit opt-in, so a bad config is a hard error.
   if (
-    !networkDisabled &&
+    !networkUnrestricted &&
     runtimeConfig.network.tlsTerminate &&
     runtimeConfig.network.mitmProxy
   ) {
@@ -615,7 +615,7 @@ async function initialize(
   // generated-if-absent under %LOCALAPPDATA%\sandbox-runtime\ca\ and
   // trusted in the sandbox user's Root store, then loaded here.
   // Explicit paths (or non-Windows) go straight to createMitmCA.
-  const tlsTerminate = networkDisabled
+  const tlsTerminate = networkUnrestricted
     ? undefined
     : runtimeConfig.network.tlsTerminate
   const useWindowsPersistentCa =
@@ -844,14 +844,14 @@ async function initialize(
     }
   }
 
-  // `network.disabled` is session-wide because proxy infrastructure is
+  // `network.mode` is session-wide because proxy infrastructure is
   // initialized once and shared by every wrapped command. Keep a resolved
   // promise as the initialization sentinel, but deliberately create no
   // listeners, bridges, proxy credentials, or manager context.
-  if (networkDisabled) {
+  if (networkUnrestricted) {
     initializationPromise = Promise.resolve(undefined)
     logForDebugging(
-      'Network enforcement disabled; skipping proxy infrastructure',
+      'Network mode is unrestricted; skipping proxy infrastructure',
     )
     return
   }
@@ -1357,7 +1357,7 @@ function sameWindowsStampSet(newConfig: SandboxRuntimeConfig): boolean {
 }
 
 function getNetworkRestrictionConfig(): NetworkRestrictionConfig {
-  if (!config || config.network.disabled) {
+  if (!config || config.network.mode === 'unrestricted') {
     return {}
   }
 
@@ -1385,23 +1385,23 @@ function getAllowAllUnixSockets(): boolean | undefined {
 }
 
 /**
- * Resolve network.disabled and reject per-call changes. Unlike filesystem
+ * Resolve unrestricted network mode and reject per-call changes. Unlike filesystem
  * profiles, proxy/bridge infrastructure is session-scoped: changing either
  * direction for one command would leave resources missing or unexpectedly
  * running, and masked credentials depend on that same proxy lifecycle.
  */
-function isNetworkDisabled(
+function isNetworkUnrestricted(
   customConfig?: Partial<SandboxRuntimeConfig>,
 ): boolean {
-  const sessionDisabled = config?.network.disabled ?? false
-  const perCallDisabled = customConfig?.network?.disabled
-  if (perCallDisabled !== undefined && perCallDisabled !== sessionDisabled) {
+  const sessionMode = config?.network.mode ?? 'filtered'
+  const perCallMode = customConfig?.network?.mode
+  if (perCallMode !== undefined && perCallMode !== sessionMode) {
     throw new Error(
-      'network.disabled is session-wide because it controls proxy ' +
+      'network.mode is session-wide because it controls proxy ' +
         'infrastructure. Call reset() and initialize() to change it.',
     )
   }
-  return sessionDisabled
+  return sessionMode === 'unrestricted'
 }
 
 function getAllowLocalBinding(): boolean | undefined {
@@ -1535,7 +1535,7 @@ async function wrapWithSandbox(
   const platform = getPlatform()
   const commandId = options?.commandId
   registerCommandText(command, options)
-  const networkDisabled = isNetworkDisabled(customConfig)
+  const networkUnrestricted = isNetworkUnrestricted(customConfig)
 
   // filesystem.disabled bypasses ALL filesystem rule generation. Both
   // platform wrappers treat readConfig/writeConfig === undefined as "no
@@ -1639,7 +1639,7 @@ async function wrapWithSandbox(
   // 2. OR config has network.allowedDomains defined (even if empty array = block all)
   // An empty allowedDomains array means "no domains allowed" = block all network access
   const hasNetworkConfig =
-    !networkDisabled &&
+    !networkUnrestricted &&
     (customConfig?.network?.allowedDomains !== undefined ||
       config?.network?.allowedDomains !== undefined)
 
@@ -1681,18 +1681,18 @@ async function wrapWithSandbox(
         setEnvVars: credentialRestrictions.setEnvVars,
         maskedFileBinds: credentialRestrictions.maskedFileBinds,
         allowUnixSockets: getAllowUnixSockets(),
-        allowAllUnixSockets: networkDisabled || getAllowAllUnixSockets(),
+        allowAllUnixSockets: networkUnrestricted || getAllowAllUnixSockets(),
         allowLocalBinding: getAllowLocalBinding(),
         allowMachLookup: getAllowMachLookup(),
         ignoreViolations: getIgnoreViolations(),
         allowPty,
         allowGitConfig: getAllowGitConfig(),
         gitSafeDirectories,
-        // trustd is intentionally reachable when all network policy is
-        // disabled; otherwise Go clients can have direct egress but still
+        // trustd is intentionally reachable in unrestricted network mode;
+        // otherwise Go clients can have direct egress but still
         // fail certificate verification on macOS.
         enableWeakerNetworkIsolation:
-          networkDisabled || getEnableWeakerNetworkIsolation(),
+          networkUnrestricted || getEnableWeakerNetworkIsolation(),
         allowAppleEvents: getAllowAppleEvents(),
         binShell,
       })
@@ -1724,7 +1724,7 @@ async function wrapWithSandbox(
         maskedFileBinds: credentialRestrictions.maskedFileBinds,
         maskedFileStoreDir: credentialRestrictions.maskedFileStoreDir,
         enableWeakerNestedSandbox: getEnableWeakerNestedSandbox(),
-        allowAllUnixSockets: networkDisabled || getAllowAllUnixSockets(),
+        allowAllUnixSockets: networkUnrestricted || getAllowAllUnixSockets(),
         binShell,
         ripgrepConfig: getRipgrepConfig(),
         mandatoryDenySearchDepth: getMandatoryDenySearchDepth(),
@@ -1788,15 +1788,15 @@ async function wrapWithSandboxArgv(
   const platform = getPlatform()
 
   if (platform === 'windows') {
-    const networkDisabled = isNetworkDisabled(customConfig)
-    if (networkDisabled) {
+    const networkUnrestricted = isNetworkUnrestricted(customConfig)
+    if (networkUnrestricted) {
       throw new Error(
-        'network.disabled is not supported on Windows: the install-scoped ' +
+        'network.mode="unrestricted" is not supported on Windows: the install-scoped ' +
           'WFP fence applies to every process running as the srt-sandbox user.',
       )
     }
     const hasNetworkConfig =
-      !networkDisabled &&
+      !networkUnrestricted &&
       (customConfig?.network?.allowedDomains !== undefined ||
         config?.network?.allowedDomains !== undefined)
     if (hasNetworkConfig) {
@@ -1944,10 +1944,11 @@ function getConfig(): SandboxRuntimeConfig | undefined {
 function updateConfig(newConfig: SandboxRuntimeConfig): void {
   if (
     config !== undefined &&
-    (config.network.disabled ?? false) !== (newConfig.network.disabled ?? false)
+    (config.network.mode ?? 'filtered') !==
+      (newConfig.network.mode ?? 'filtered')
   ) {
     throw new Error(
-      'network.disabled is session-wide because it controls proxy ' +
+      'network.mode is session-wide because it controls proxy ' +
         'infrastructure. Call reset() and initialize() to change it.',
     )
   }
@@ -1974,9 +1975,10 @@ function updateConfig(newConfig: SandboxRuntimeConfig): void {
   // servers capture `parentProxy` by value at creation, so changes here take
   // effect only on re-initialize. This keeps the state consistent for the
   // next initialize() call.
-  parentProxy = newConfig.network.disabled
-    ? undefined
-    : resolveParentProxy(newConfig.network.parentProxy)
+  parentProxy =
+    newConfig.network.mode === 'unrestricted'
+      ? undefined
+      : resolveParentProxy(newConfig.network.parentProxy)
   logForDebugging('Sandbox configuration updated')
 }
 

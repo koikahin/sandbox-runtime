@@ -186,7 +186,7 @@ describe('CLI', () => {
         settingsPath,
         JSON.stringify({
           network: {
-            disabled: true,
+            mode: 'unrestricted',
             allowedDomains: [],
             deniedDomains: [],
           },
@@ -221,7 +221,7 @@ describe('CLI', () => {
         settingsPath,
         JSON.stringify({
           network: {
-            disabled: true,
+            mode: 'unrestricted',
             allowedDomains: [],
             deniedDomains: [],
           },

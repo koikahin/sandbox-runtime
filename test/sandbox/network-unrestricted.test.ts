@@ -11,12 +11,12 @@ import { isLinux, isMacOS } from '../helpers/platform.js'
 
 const supported = isMacOS || isLinux
 
-function disabledConfig(): SandboxRuntimeConfig {
+function unrestrictedConfig(): SandboxRuntimeConfig {
   return {
     network: {
-      disabled: true,
+      mode: 'unrestricted',
       // Keep the standard settings shape. These policy fields are ignored
-      // while disabled and become usable again after reset()+initialize().
+      // in unrestricted mode and become usable again after reset()+initialize().
       allowedDomains: [],
       deniedDomains: [],
       allowAllUnixSockets: false,
@@ -29,13 +29,13 @@ function disabledConfig(): SandboxRuntimeConfig {
   }
 }
 
-describe.if(supported)('network.disabled', () => {
+describe.if(supported)('network.mode="unrestricted"', () => {
   afterEach(async () => {
     await SandboxManager.reset()
   })
 
   it('initializes without starting proxy or bridge infrastructure', async () => {
-    await SandboxManager.initialize(disabledConfig())
+    await SandboxManager.initialize(unrestrictedConfig())
 
     expect(SandboxManager.getProxyPort()).toBeUndefined()
     expect(SandboxManager.getSocksProxyPort()).toBeUndefined()
@@ -46,9 +46,9 @@ describe.if(supported)('network.disabled', () => {
   })
 
   it('keeps filesystem sandboxing while omitting every network mechanism', async () => {
-    await SandboxManager.initialize(disabledConfig())
+    await SandboxManager.initialize(unrestrictedConfig())
 
-    const command = 'printf network-disabled'
+    const command = 'printf network-unrestricted'
     const wrapped = await SandboxManager.wrapWithSandbox(command)
 
     // The filesystem allow-only policy still requires a native sandbox.
@@ -67,7 +67,7 @@ describe.if(supported)('network.disabled', () => {
 
     const deniedWrite = join(
       tmpdir(),
-      `srt-network-disabled-denied-${process.pid}`,
+      `srt-network-unrestricted-denied-${process.pid}`,
     )
     rmSync(deniedWrite, { force: true })
     const deniedWriteCommand = await SandboxManager.wrapWithSandbox(
@@ -86,7 +86,7 @@ describe.if(supported)('network.disabled', () => {
     await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
 
     try {
-      await SandboxManager.initialize(disabledConfig())
+      await SandboxManager.initialize(unrestrictedConfig())
       const port = (upstream.address() as AddressInfo).port
       const wrapped = await SandboxManager.wrapWithSandbox(
         `curl --silent --show-error --fail --noproxy '*' http://127.0.0.1:${port}`,
@@ -104,12 +104,12 @@ describe.if(supported)('network.disabled', () => {
   })
 
   it('rejects changing enforcement per call when the session has no proxy', async () => {
-    await SandboxManager.initialize(disabledConfig())
+    await SandboxManager.initialize(unrestrictedConfig())
 
     await expect(
       SandboxManager.wrapWithSandbox('true', undefined, {
         network: {
-          disabled: false,
+          mode: 'filtered',
           allowedDomains: [],
           deniedDomains: [],
         },
@@ -117,14 +117,14 @@ describe.if(supported)('network.disabled', () => {
     ).rejects.toThrow('session-wide')
   })
 
-  it('requires reinitialization when updateConfig toggles disabled', async () => {
-    const initial = disabledConfig()
+  it('requires reinitialization when updateConfig changes mode', async () => {
+    const initial = unrestrictedConfig()
     await SandboxManager.initialize(initial)
 
     expect(() =>
       SandboxManager.updateConfig({
         ...initial,
-        network: { ...initial.network, disabled: false },
+        network: { ...initial.network, mode: 'filtered' },
       }),
     ).toThrow('session-wide')
   })

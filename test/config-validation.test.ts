@@ -19,10 +19,10 @@ describe('Config Validation', () => {
     expect(result.success).toBe(true)
   })
 
-  test('should validate network.disabled while retaining the normal settings shape', () => {
+  test('should validate unrestricted network mode while retaining the normal settings shape', () => {
     const result = SandboxRuntimeConfigSchema.safeParse({
       network: {
-        disabled: true,
+        mode: 'unrestricted',
         allowedDomains: [],
         deniedDomains: [],
       },
@@ -35,14 +35,14 @@ describe('Config Validation', () => {
 
     expect(result.success).toBe(true)
     if (result.success) {
-      expect(result.data.network.disabled).toBe(true)
+      expect(result.data.network.mode).toBe('unrestricted')
     }
   })
 
-  test('should reject masked credentials when network enforcement is disabled', () => {
+  test('should reject masked credentials in unrestricted network mode', () => {
     const result = SandboxRuntimeConfigSchema.safeParse({
       network: {
-        disabled: true,
+        mode: 'unrestricted',
         allowedDomains: ['api.example.com'],
         deniedDomains: [],
         tlsTerminate: {},
@@ -61,7 +61,9 @@ describe('Config Validation', () => {
     if (!result.success) {
       expect(
         result.error.issues.some(issue =>
-          issue.message.includes('incompatible with network.disabled'),
+          issue.message.includes(
+            'incompatible with network.mode="unrestricted"',
+          ),
         ),
       ).toBe(true)
     }

@@ -308,7 +308,7 @@ srt --settings /path/to/srt-settings.json <command>
 
 Uses an **allow-only pattern** - all network access is denied by default.
 
-- `network.disabled` - Disable network policy enforcement entirely (boolean, default: false). On macOS and Linux, the sandboxed process uses the host network directly: SRT does not start its proxies, inject proxy environment variables, create a network namespace, or block Unix sockets. The other `network` fields remain required for a stable settings-file shape but are ignored while disabled. Filesystem restrictions remain active. Changing this value requires `reset()` + `initialize()`, because proxy infrastructure is session-scoped. Credential mode `"mask"` is incompatible because substitution occurs in SRT's proxy; mode `"deny"` remains available. Windows does not support this option because its WFP fence is installed for the dedicated sandbox account.
+- `network.mode` - Select network handling: `"filtered"` (the default when omitted) enforces the domain policy through SRT's proxies, while `"unrestricted"` uses the host network directly. In unrestricted mode SRT does not start its proxies, inject proxy environment variables, create a network namespace, or block Unix sockets. The other `network` fields remain required for a stable settings-file shape but are ignored. Filesystem restrictions remain active. Changing modes requires `reset()` + `initialize()`, because proxy infrastructure is session-scoped. Credential mode `"mask"` is incompatible with unrestricted networking because substitution occurs in SRT's proxy; mode `"deny"` remains available. Windows does not support unrestricted mode because its WFP fence is installed for the dedicated sandbox account.
 - `network.allowedDomains` - Array of allowed domains (supports wildcards like `*.example.com`). Empty array = no network access. An optional `:port` suffix (`api.example.com:443`, `*.example.com:8443`) restricts an entry to that destination port; entries without a port match any port.
   - IPv6 literals must be bracketed, RFC 3986-style: `[::1]`, `[2001:db8::1]:443`. An unbracketed multi-colon entry is rejected as ambiguous (`2001:db8::1:443` is itself a valid address).
 - `network.deniedDomains` - Array of denied domains (checked first, takes precedence over allowedDomains). Same `:port` suffix, and a bare `*` (or `*:22`) is accepted for deny-all.
@@ -405,7 +405,7 @@ Examples:
 ```json
 {
   "network": {
-    "disabled": true,
+    "mode": "unrestricted",
     "allowedDomains": [],
     "deniedDomains": []
   },

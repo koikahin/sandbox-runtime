@@ -707,15 +707,16 @@ export const CredentialsConfigSchema = z
  * Network configuration schema for validation
  */
 export const NetworkConfigSchema = z.object({
-  disabled: z
-    .boolean()
+  mode: z
+    .enum(['filtered', 'unrestricted'])
     .optional()
     .describe(
-      'Disable all network policy enforcement. When true, network traffic uses the host network ' +
+      'Select network handling. "filtered" (the default) enforces the domain policy through ' +
+        'SRT proxies. "unrestricted" uses the host network ' +
         'directly: no proxy is started, no proxy environment variables are injected, and Unix ' +
         'sockets are not blocked. allowedDomains/deniedDomains and other proxy settings are ignored. ' +
-        'Filesystem restrictions remain enforced. Supported on macOS and Linux; Windows cannot ' +
-        'disable its install-scoped WFP fence for the sandbox account.',
+        'Filesystem restrictions remain enforced. Unrestricted mode is supported on macOS and ' +
+        'Linux; Windows cannot bypass its install-scoped WFP fence for the sandbox account.',
     ),
   allowedDomains: z
     .array(domainPortPatternSchema)
@@ -1371,7 +1372,7 @@ export const SandboxRuntimeConfigSchema = z
     // is the explicit escape hatch.
     if (
       hasMasked &&
-      !cfg.network.disabled &&
+      cfg.network.mode !== 'unrestricted' &&
       cfg.network.tlsTerminate === undefined &&
       !creds.allowPlaintextInject
     ) {
@@ -1384,12 +1385,12 @@ export const SandboxRuntimeConfigSchema = z
           'set credentials.allowPlaintextInject to opt out (not recommended).',
       })
     }
-    if (hasMasked && cfg.network.disabled) {
+    if (hasMasked && cfg.network.mode === 'unrestricted') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['credentials'],
         message:
-          'Credential masking is incompatible with network.disabled because ' +
+          'Credential masking is incompatible with network.mode="unrestricted" because ' +
           'sentinel substitution runs in the SRT proxy. Use credential mode ' +
           '"deny", or enable network enforcement.',
       })
