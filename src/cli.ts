@@ -179,8 +179,8 @@ async function main(): Promise<void> {
       parseInt,
     )
     .option(
-      '--denial-log [path]',
-      'write sandbox denials as JSON Lines (default: a temporary file)',
+      '--denial-log-file <path>',
+      'write sandbox denials to this JSON Lines file (default: an OS-managed temporary file)',
     )
     .allowUnknownOption()
     .action(
@@ -191,7 +191,7 @@ async function main(): Promise<void> {
           settings?: string
           c?: string
           controlFd?: number
-          denialLog?: true | string
+          denialLogFile?: string
         },
       ) => {
         let controlReader: readline.Interface | null = null
@@ -249,24 +249,15 @@ async function main(): Promise<void> {
 
           // Initialize sandbox with config
           logForDebugging('Initializing sandbox...')
-          const denialLogEnabled = options.denialLog !== undefined
-          await SandboxManager.initialize(
-            runtimeConfig,
-            undefined,
-            denialLogEnabled,
-          )
+          await SandboxManager.initialize(runtimeConfig, undefined, true)
           sandboxInitialized = true
 
-          if (denialLogEnabled) {
-            denialLog = createDenialLog(
-              SandboxManager.getSandboxViolationStore(),
-              typeof options.denialLog === 'string'
-                ? options.denialLog
-                : undefined,
-            )
-            console.error(`[Sandbox] Denial log: ${denialLog.path}`)
-            await waitForDenialLogReady()
-          }
+          denialLog = createDenialLog(
+            SandboxManager.getSandboxViolationStore(),
+            options.denialLogFile,
+          )
+          console.error(`[Sandbox] Denial log: ${denialLog.path}`)
+          await waitForDenialLogReady()
 
           // Set up control fd for dynamic config updates if specified
           if (options.controlFd !== undefined) {

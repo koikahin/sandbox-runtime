@@ -173,11 +173,12 @@ srt --debug curl https://example.com
 # Specify custom settings file
 srt --settings /path/to/srt-settings.json npm install
 
-# Log denied accesses to an automatically-created temporary JSONL file
-srt --denial-log -- npm install
+# Every command logs denied accesses to an automatically-created temporary
+# JSONL file and prints its location
+srt npm install
 
-# Or choose the log path explicitly
-srt --denial-log /tmp/npm-denials.jsonl -- npm install
+# Choose the log path explicitly
+srt --denial-log-file /tmp/npm-denials.jsonl -- npm install
 ```
 
 ### As a library
@@ -756,11 +757,11 @@ When a sandboxed process attempts to access a restricted resource:
 2. **Logs the violation** (platform-specific mechanisms)
 3. **Notifies the user** (in Claude Code, this triggers a permission prompt)
 
-The CLI can persist the violations SRT detects by passing `--denial-log`. With no path, it creates a private temporary directory and prints the resulting path; use `--denial-log <path>` to choose one. Put `--` before the command when omitting the optional path:
+The CLI always persists the violations SRT detects as newline-delimited JSON. By default it creates a private directory under the operating system's temporary-file location and prints the resulting log path. The OS may clean up that directory automatically. Use `--denial-log-file <path>` when the log needs a specific or durable location:
 
 ```bash
-srt --settings .srt-settings.json --denial-log -- npm test
-srt --settings .srt-settings.json --denial-log /tmp/npm-denials.jsonl -- npm test
+srt --settings .srt-settings.json -- npm test
+srt --settings .srt-settings.json --denial-log-file /tmp/npm-denials.jsonl -- npm test
 ```
 
 The file is newline-delimited JSON, with one record per denial, making it suitable for later grouping into read/write path trees:

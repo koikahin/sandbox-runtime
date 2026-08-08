@@ -178,8 +178,8 @@ describe('CLI', () => {
     })
   })
 
-  describe.if(process.platform === 'darwin')('--denial-log', () => {
-    test('creates and reports a temporary log when no path is supplied', () => {
+  describe.if(process.platform === 'darwin')('denial logging', () => {
+    test('creates and reports a temporary log by default', () => {
       const dir = mkdtempSync(join(tmpdir(), 'srt-cli-denials-settings-'))
       const settingsPath = join(dir, 'settings.json')
       writeFileSync(
@@ -200,13 +200,7 @@ describe('CLI', () => {
 
       let logPath: string | undefined
       try {
-        const result = runCli([
-          '--settings',
-          settingsPath,
-          '--denial-log',
-          '--',
-          'true',
-        ])
+        const result = runCli(['--settings', settingsPath, '--', 'true'])
         expect(result.status).toBe(0)
         logPath = result.stderr.match(/\[Sandbox\] Denial log: (.+)/)?.[1]
         expect(logPath).toBeDefined()
@@ -243,7 +237,7 @@ describe('CLI', () => {
         const result = runCli([
           '--settings',
           settingsPath,
-          '--denial-log',
+          '--denial-log-file',
           logPath,
           '--',
           'touch',
